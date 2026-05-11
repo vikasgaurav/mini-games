@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stack</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 24px;
+    gap: 12px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(92vw, 420px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    max-width: 340px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .stage {
+    position: relative;
+    width: min(92vw, 360px);
+    aspect-ratio: 360 / 600;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    background: #161a22;
+    border-radius: 10px;
+    display: block;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+  .combo {
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 2px;
+    opacity: 0;
+    transition: opacity 200ms;
+    pointer-events: none;
+    text-shadow: 0 0 10px rgba(124, 240, 168, 0.6);
+  }
+  .combo.show { opacity: 1; }
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+    text-align: center;
+    padding: 16px;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 {
+    font-size: 28px;
+    margin: 0;
+  }
+  .overlay p { color: var(--muted); margin: 0; max-width: 320px; }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>STACK</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Tap to drop. Stack as high as you can.</div>
+    <div class="hud">
+      <div><span class="label">Score</span><span class="value" id="score">0</span></div>
+      <div><span class="label">Best</span><span class="value" id="best">0</span></div>
+    </div>
+    <div class="stage">
+      <canvas id="game" width="360" height="600"></canvas>
+      <div class="combo" id="combo">PERFECT</div>
+    </div>
+    <div class="hint">Tap anywhere · or press Space</div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Stack</h2>
+    <p id="overlaySub">Tap to drop the sliding block onto the tower. Misalignment shrinks the next block.</p>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+  const comboEl = document.getElementById('combo');
+
+  const BLOCK_H = 32;
+  const PERFECT_TOL = 3;
+
+  let blocks = [];      // settled: {x, w, y, color}
+  let chunks = [];      // falling cut-off: {x, w, y, color, vx, vy}
+  let mover = null;     // {x, w, y, dir, speed, color}
+  let score = 0;
+  let best = parseInt(localStorage.getItem('stackBest') || '0', 10);
+  let cameraY = 0;      // world-Y at bottom of canvas
+  let targetCameraY = 0;
+  let running = false;
+  let comboTimer = 0;
+
+  bestEl.textContent = best;
+
+  function hueFor(n) {
+    return (180 + n * 12) % 360;
+  }
+  function colorFor(n) {
+    return `hsl(${hueFor(n)}, 65%, 58%)`;
+  }
+  function shadeFor(n) {
+    return `hsl(${hueFor(n)}, 60%, 42%)`;
+  }
+
+  function reset() {
+    blocks = [];
+    chunks = [];
+    score = 0;
+    scoreEl.textContent = 0;
+    // base block at bottom
+    const baseW = 200;
+    const baseX = (W - baseW) / 2;
+    blocks.push({ x: baseX, w: baseW, y: 0, color: colorFor(0) });
+    cameraY = 0;
+    targetCameraY = 0;
+    spawnMover();
+  }
+
+  function spawnMover() {
+    const top = blocks[blocks.length - 1];
+    const newY = top.y + BLOCK_H;
+    const fromLeft = Math.random() < 0.5;
+    const speed = Math.min(7, 2.2 + score * 0.08);
+    mover = {
+      x: fromLeft ? -top.w : W,
+      w: top.w,
+      y: newY,
+      dir: fromLeft ? 1 : -1,
+      speed,
+      color: colorFor(score + 1),
+    };
+    // target camera so mover sits ~1/3 from top of canvas
+    targetCameraY = Math.max(0, newY - (H * 0.66));
+  }
+
+  function place() {
+    const top = blocks[blocks.length - 1];
+    const overlapL = Math.max(mover.x, top.x);
+    const overlapR = Math.min(mover.x + mover.w, top.x + top.w);
+    const overlapW = overlapR - overlapL;
+    if (overlapW <= 0) return gameOver();
+
+    const diff = Math.abs(mover.x - top.x);
+    const perfect = diff <= PERFECT_TOL;
+
+    let placedX = overlapL;
+    let placedW = overlapW;
+
+    if (perfect) {
+      // snap to top, no chunks
+      placedX = top.x;
+      placedW = top.w;
+      flashCombo('PERFECT');
+    } else {
+      // spawn cut-off chunks
+      if (mover.x < top.x) {
+        chunks.push({
+          x: mover.x, w: top.x - mover.x, y: mover.y,
+          color: mover.color, vx: -2 - Math.random(), vy: 0,
+        });
+      }
+      if (mover.x + mover.w > top.x + top.w) {
+        const cx = top.x + top.w;
+        chunks.push({
+          x: cx, w: (mover.x + mover.w) - cx, y: mover.y,
+          color: mover.color, vx: 2 + Math.random(), vy: 0,
+        });
+      }
+    }
+
+    blocks.push({ x: placedX, w: placedW, y: mover.y, color: mover.color });
+    score++;
+    scoreEl.textContent = score;
+    spawnMover();
+  }
+
+  function flashCombo(text) {
+    comboEl.textContent = text;
+    comboEl.classList.add('show');
+    comboTimer = 600;
+  }
+
+  function gameOver() {
+    running = false;
+    mover = null;
+    if (score > best) {
+      best = score;
+      localStorage.setItem('stackBest', String(best));
+      bestEl.textContent = best;
+    }
+    overlayTitle.textContent = 'Game over';
+    overlaySub.textContent = `Stacked ${score} block${score === 1 ? '' : 's'} · Best ${best}`;
+    playBtn.textContent = 'Play again';
+    overlay.classList.add('show');
+  }
+
+  function update(dt) {
+    // camera ease
+    cameraY += (targetCameraY - cameraY) * Math.min(1, dt * 0.008);
+
+    if (mover) {
+      mover.x += mover.dir * mover.speed * (dt / 16.67);
+      if (mover.x <= -mover.w * 0.5 && mover.dir === -1) mover.dir = 1;
+      else if (mover.x >= W - mover.w * 0.5 && mover.dir === 1) mover.dir = -1;
+    }
+
+    chunks.forEach(c => {
+      c.vy += 0.6;
+      c.x += c.vx;
+      c.y -= c.vy;
+    });
+    chunks = chunks.filter(c => (c.y - cameraY) > -200);
+
+    if (comboTimer > 0) {
+      comboTimer -= dt;
+      if (comboTimer <= 0) comboEl.classList.remove('show');
+    }
+  }
+
+  function worldToScreenY(wy) {
+    // world Y increases upward (block at y=0 is base). Canvas Y increases downward.
+    // Bottom of canvas should show worldY = cameraY.
+    return H - (wy - cameraY) - BLOCK_H;
+  }
+
+  function drawBlock(b) {
+    const sy = worldToScreenY(b.y);
+    if (sy > H + 50 || sy < -BLOCK_H * 2) return;
+    // front face
+    ctx.fillStyle = b.color;
+    roundRect(b.x, sy, b.w, BLOCK_H, 3);
+    ctx.fill();
+    // bottom shade strip
+    const hue = parseHue(b.color);
+    if (hue !== null) {
+      ctx.fillStyle = `hsl(${hue}, 60%, 42%)`;
+      ctx.fillRect(b.x, sy + BLOCK_H - 4, b.w, 4);
+    }
+  }
+
+  function parseHue(hslStr) {
+    const m = hslStr.match(/hsl\((\d+)/);
+    return m ? +m[1] : null;
+  }
+
+  function roundRect(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    ctx.fillStyle = '#161a22';
+    ctx.fillRect(0, 0, W, H);
+
+    blocks.forEach(drawBlock);
+
+    chunks.forEach(c => {
+      const sy = worldToScreenY(c.y);
+      ctx.fillStyle = c.color;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(c.x, sy, c.w, BLOCK_H);
+      ctx.globalAlpha = 1;
+    });
+
+    if (mover) drawBlock(mover);
+  }
+
+  let lastT = 0;
+  function loop(t) {
+    const dt = lastT ? (t - lastT) : 16;
+    lastT = t;
+    if (running) update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function onTap() {
+    if (!running) return;
+    place();
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    onTap();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      onTap();
+    }
+  });
+
+  function newGame() {
+    reset();
+    overlay.classList.remove('show');
+    running = true;
+  }
+
+  playBtn.addEventListener('click', newGame);
+
+  reset();
+  draw();
+  overlay.classList.add('show');
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
