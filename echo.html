@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Echo</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 32px;
+    gap: 16px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(92vw, 420px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    max-width: 340px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .status {
+    font-size: 13px;
+    color: var(--muted);
+    height: 18px;
+    letter-spacing: 0.5px;
+  }
+  .status.go { color: var(--accent); }
+  .status.watch { color: #f59e0b; }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 10px;
+    width: min(86vw, 360px);
+    aspect-ratio: 1 / 1;
+  }
+  .pad {
+    border-radius: 12px;
+    background: #1c2029;
+    cursor: pointer;
+    transition: background 100ms ease, transform 80ms ease, box-shadow 120ms;
+    border: none;
+    padding: 0;
+  }
+  .pad:hover { background: #232834; }
+  .pad:active { transform: scale(0.96); }
+  .pad.flash {
+    background: var(--accent);
+    box-shadow: 0 0 40px rgba(124, 240, 168, 0.4);
+  }
+  .pad.tap {
+    background: #3b82f6;
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.4);
+  }
+  .pad.wrong {
+    background: var(--danger);
+  }
+  .pad.locked { cursor: default; }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+    text-align: center;
+    padding: 16px;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 {
+    font-size: 28px;
+    margin: 0;
+  }
+  .overlay p { color: var(--muted); margin: 0; max-width: 320px; }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>ECHO</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Watch the sequence. Tap it back. Each round adds one step.</div>
+    <div class="hud">
+      <div><span class="label">Round</span><span class="value" id="round">1</span></div>
+      <div><span class="label">Best</span><span class="value" id="best">0</span></div>
+    </div>
+    <div class="status" id="status">&nbsp;</div>
+    <div class="board" id="board"></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Echo</h2>
+    <p id="overlaySub">Watch the sequence, then tap the tiles back in the same order.</p>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const boardEl = document.getElementById('board');
+  const roundEl = document.getElementById('round');
+  const bestEl = document.getElementById('best');
+  const statusEl = document.getElementById('status');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+
+  const N = 9;
+  let pads = [];
+  let sequence = [];
+  let userIdx = 0;
+  let round = 1;
+  let best = parseInt(localStorage.getItem('echoBest') || '0', 10);
+  let accepting = false;
+
+  bestEl.textContent = best;
+
+  function buildPads() {
+    boardEl.innerHTML = '';
+    pads = [];
+    for (let i = 0; i < N; i++) {
+      const p = document.createElement('button');
+      p.className = 'pad locked';
+      p.addEventListener('click', () => handleTap(i, p));
+      boardEl.appendChild(p);
+      pads.push(p);
+    }
+  }
+
+  function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function flashSpeed() {
+    // get faster as rounds increase, with a floor
+    return Math.max(280, 700 - round * 30);
+  }
+
+  async function playSequence() {
+    accepting = false;
+    statusEl.textContent = 'WATCH';
+    statusEl.className = 'status watch';
+    pads.forEach(p => p.classList.add('locked'));
+    await wait(500);
+    const speed = flashSpeed();
+    for (const idx of sequence) {
+      pads[idx].classList.add('flash');
+      await wait(speed);
+      pads[idx].classList.remove('flash');
+      await wait(Math.max(100, speed * 0.3));
+    }
+    statusEl.textContent = 'YOUR TURN';
+    statusEl.className = 'status go';
+    pads.forEach(p => p.classList.remove('locked'));
+    userIdx = 0;
+    accepting = true;
+  }
+
+  async function handleTap(i, el) {
+    if (!accepting) return;
+    if (i === sequence[userIdx]) {
+      el.classList.add('tap');
+      setTimeout(() => el.classList.remove('tap'), 180);
+      userIdx++;
+      if (userIdx === sequence.length) {
+        accepting = false;
+        statusEl.textContent = '';
+        statusEl.className = 'status';
+        await wait(500);
+        round++;
+        roundEl.textContent = round;
+        nextStep();
+      }
+    } else {
+      accepting = false;
+      el.classList.add('wrong');
+      statusEl.textContent = 'WRONG';
+      statusEl.className = 'status';
+      statusEl.style.color = 'var(--danger)';
+      await wait(700);
+      el.classList.remove('wrong');
+      gameOver();
+    }
+  }
+
+  function nextStep() {
+    sequence.push(Math.floor(Math.random() * N));
+    playSequence();
+  }
+
+  function gameOver() {
+    const reached = round - 1;
+    if (reached > best) {
+      best = reached;
+      localStorage.setItem('echoBest', String(best));
+    }
+    bestEl.textContent = best;
+    overlayTitle.textContent = 'Game over';
+    overlaySub.textContent = `You reached round ${reached}${reached >= best && reached > 0 ? ' — new best!' : ''}`;
+    playBtn.textContent = 'Play again';
+    overlay.classList.add('show');
+    statusEl.style.color = '';
+  }
+
+  function newGame() {
+    sequence = [];
+    round = 1;
+    userIdx = 0;
+    roundEl.textContent = round;
+    overlay.classList.remove('show');
+    statusEl.style.color = '';
+    nextStep();
+  }
+
+  playBtn.addEventListener('click', newGame);
+  buildPads();
+  overlay.classList.add('show');
+})();
+</script>
+</body>
+</html>
