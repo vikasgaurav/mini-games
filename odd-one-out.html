@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Odd One Out</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 24px 16px 32px;
+    gap: 16px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(92vw, 480px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: -8px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .timer-wrap {
+    width: min(92vw, 480px);
+    height: 6px;
+    background: #1c2029;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .timer-bar {
+    height: 100%;
+    width: 100%;
+    background: var(--accent);
+    transition: width 100ms linear, background 200ms;
+  }
+  .timer-bar.low { background: var(--danger); }
+  .board {
+    display: grid;
+    gap: 6px;
+    width: min(92vw, 480px);
+    aspect-ratio: 1 / 1;
+  }
+  .tile {
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 80ms ease, opacity 200ms;
+    border: none;
+    padding: 0;
+  }
+  .tile:hover { transform: scale(0.97); }
+  .tile:active { transform: scale(0.93); }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 18px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 {
+    font-size: 28px;
+    margin: 0;
+  }
+  .overlay p { color: var(--muted); margin: 0; }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .shake { animation: shake 220ms; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-6px); }
+    75% { transform: translateX(6px); }
+  }
+  .flash-good { animation: flashGood 280ms; }
+  @keyframes flashGood {
+    0% { box-shadow: 0 0 0 0 rgba(124, 240, 168, 0.6); }
+    100% { box-shadow: 0 0 0 20px rgba(124, 240, 168, 0); }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>ODD ONE OUT</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Tap the tile that looks different.</div>
+    <div class="hud">
+      <div><span class="label">Round</span><span class="value" id="round">1</span></div>
+      <div><span class="label">Score</span><span class="value" id="score">0</span></div>
+      <div><span class="label">Best</span><span class="value" id="best">0</span></div>
+    </div>
+    <div class="timer-wrap"><div class="timer-bar" id="timerBar"></div></div>
+    <div class="board" id="board"></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Game Over</h2>
+    <p id="overlaySub">You scored 0 points.</p>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const boardEl = document.getElementById('board');
+  const roundEl = document.getElementById('round');
+  const scoreEl = document.getElementById('score');
+  const bestEl  = document.getElementById('best');
+  const timerBar = document.getElementById('timerBar');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+
+  let round = 1;
+  let score = 0;
+  let best = parseInt(localStorage.getItem('oddOneOutBest') || '0', 10);
+  let timeLeft = 0;
+  let timeTotal = 0;
+  let timerId = null;
+  let active = false;
+
+  bestEl.textContent = best;
+
+  function gridSize(r) {
+    // 2,2,3,3,3,4,4,4,5,5,5,6,6,6,7...
+    if (r <= 2) return 2;
+    if (r <= 5) return 3;
+    if (r <= 8) return 4;
+    if (r <= 11) return 5;
+    if (r <= 14) return 6;
+    return 7;
+  }
+
+  function colorDifficulty(r) {
+    // smaller delta = harder. Start easy, decay.
+    const base = 70;
+    const min = 6;
+    const delta = Math.max(min, base - (r - 1) * 4);
+    return delta;
+  }
+
+  function roundTime(r) {
+    // ms; gentle decrease
+    return Math.max(2500, 8000 - (r - 1) * 300);
+  }
+
+  function randomColor() {
+    const h = Math.floor(Math.random() * 360);
+    const s = 55 + Math.floor(Math.random() * 25);
+    const l = 45 + Math.floor(Math.random() * 15);
+    return { h, s, l };
+  }
+
+  function hsl({h, s, l}) {
+    return `hsl(${h}, ${s}%, ${l}%)`;
+  }
+
+  function shiftColor(c, delta) {
+    // shift lightness, keep within bounds
+    const dir = c.l > 50 ? -1 : 1;
+    return { h: c.h, s: c.s, l: c.l + dir * delta };
+  }
+
+  function startRound() {
+    active = true;
+    const n = gridSize(round);
+    const total = n * n;
+    const oddIdx = Math.floor(Math.random() * total);
+    const base = randomColor();
+    const odd = shiftColor(base, colorDifficulty(round));
+
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+    boardEl.style.gridTemplateRows    = `repeat(${n}, 1fr)`;
+
+    for (let i = 0; i < total; i++) {
+      const t = document.createElement('button');
+      t.className = 'tile';
+      t.style.background = hsl(i === oddIdx ? odd : base);
+      t.addEventListener('click', () => handleClick(i === oddIdx, t));
+      boardEl.appendChild(t);
+    }
+
+    roundEl.textContent = round;
+    scoreEl.textContent = score;
+
+    timeTotal = roundTime(round);
+    timeLeft = timeTotal;
+    updateTimerBar();
+    if (timerId) clearInterval(timerId);
+    timerId = setInterval(tick, 100);
+  }
+
+  function tick() {
+    timeLeft -= 100;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      updateTimerBar();
+      gameOver('Time\'s up!');
+      return;
+    }
+    updateTimerBar();
+  }
+
+  function updateTimerBar() {
+    const pct = (timeLeft / timeTotal) * 100;
+    timerBar.style.width = pct + '%';
+    timerBar.classList.toggle('low', pct < 25);
+  }
+
+  function handleClick(correct, tile) {
+    if (!active) return;
+    if (correct) {
+      active = false;
+      clearInterval(timerId);
+      const bonus = Math.ceil(timeLeft / 100);
+      score += 10 + bonus;
+      tile.classList.add('flash-good');
+      setTimeout(() => {
+        round++;
+        startRound();
+      }, 220);
+    } else {
+      boardEl.classList.remove('shake');
+      void boardEl.offsetWidth;
+      boardEl.classList.add('shake');
+      timeLeft = Math.max(0, timeLeft - 1000);
+      updateTimerBar();
+    }
+  }
+
+  function gameOver(reason) {
+    active = false;
+    clearInterval(timerId);
+    if (score > best) {
+      best = score;
+      localStorage.setItem('oddOneOutBest', String(best));
+    }
+    bestEl.textContent = best;
+    overlayTitle.textContent = reason;
+    overlaySub.textContent = `You scored ${score} point${score === 1 ? '' : 's'} • Best ${best}`;
+    playBtn.textContent = 'Play again';
+    overlay.classList.add('show');
+  }
+
+  function newGame() {
+    round = 1;
+    score = 0;
+    overlay.classList.remove('show');
+    startRound();
+  }
+
+  playBtn.addEventListener('click', newGame);
+
+  // initial splash
+  overlayTitle.textContent = 'Odd One Out';
+  overlaySub.textContent = 'Tap the tile that looks different. Be fast.';
+  playBtn.textContent = 'Play';
+  overlay.classList.add('show');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flood</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+    --c0: #ef4444;
+    --c1: #f59e0b;
+    --c2: #eab308;
+    --c3: #22c55e;
+    --c4: #3b82f6;
+    --c5: #a855f7;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 32px;
+    gap: 14px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(92vw, 520px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    max-width: 360px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .board {
+    display: grid;
+    width: min(92vw, 480px);
+    aspect-ratio: 1 / 1;
+    gap: 2px;
+    background: #1c2029;
+    padding: 2px;
+    border-radius: 8px;
+  }
+  .cell {
+    border-radius: 2px;
+    transition: background 180ms ease;
+  }
+  .palette {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .swatch {
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform 80ms ease, outline-color 120ms;
+    outline: 3px solid transparent;
+    outline-offset: 2px;
+  }
+  .swatch:hover { transform: scale(1.06); }
+  .swatch:active { transform: scale(0.94); }
+  .swatch.current {
+    outline-color: rgba(255,255,255,0.4);
+    cursor: not-allowed;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+    text-align: center;
+    padding: 16px;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 {
+    font-size: 28px;
+    margin: 0;
+  }
+  .overlay p { color: var(--muted); margin: 0; max-width: 320px; }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.ghost {
+    background: transparent;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .btn.ghost:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>FLOOD</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Fill the board from the top-left. Each tap absorbs touching tiles of the new color.</div>
+    <div class="hud">
+      <div><span class="label">Moves</span><span class="value" id="moves">0</span> / <span id="maxMoves">25</span></div>
+      <div><span class="label">Wins</span><span class="value" id="wins">0</span></div>
+    </div>
+    <div class="board" id="board"></div>
+    <div class="palette" id="palette"></div>
+    <button class="btn ghost" id="newBtn">New board</button>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Flood</h2>
+    <p id="overlaySub">Fill the entire board with one color in 25 moves or fewer.</p>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const SIZE = 14;
+  const COLORS = ['--c0','--c1','--c2','--c3','--c4','--c5'];
+  const MAX_MOVES = 25;
+
+  const boardEl = document.getElementById('board');
+  const paletteEl = document.getElementById('palette');
+  const movesEl = document.getElementById('moves');
+  const maxMovesEl = document.getElementById('maxMoves');
+  const winsEl = document.getElementById('wins');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+  const newBtn = document.getElementById('newBtn');
+
+  let grid = [];
+  let cellEls = [];
+  let moves = 0;
+  let wins = parseInt(localStorage.getItem('floodWins') || '0', 10);
+  let active = false;
+
+  winsEl.textContent = wins;
+  maxMovesEl.textContent = MAX_MOVES;
+
+  function buildBoard() {
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${SIZE}, 1fr)`;
+    boardEl.style.gridTemplateRows    = `repeat(${SIZE}, 1fr)`;
+    cellEls = [];
+    grid = [];
+    for (let r = 0; r < SIZE; r++) {
+      const row = [];
+      for (let c = 0; c < SIZE; c++) {
+        const v = Math.floor(Math.random() * COLORS.length);
+        row.push(v);
+        const el = document.createElement('div');
+        el.className = 'cell';
+        el.style.background = `var(${COLORS[v]})`;
+        boardEl.appendChild(el);
+        cellEls.push(el);
+      }
+      grid.push(row);
+    }
+  }
+
+  function buildPalette() {
+    paletteEl.innerHTML = '';
+    COLORS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch';
+      b.style.background = `var(${c})`;
+      b.dataset.idx = i;
+      b.addEventListener('click', () => choose(i));
+      paletteEl.appendChild(b);
+    });
+  }
+
+  function ownedCells() {
+    const start = grid[0][0];
+    const owned = Array.from({length: SIZE}, () => Array(SIZE).fill(false));
+    const stack = [[0, 0]];
+    while (stack.length) {
+      const [r, c] = stack.pop();
+      if (r < 0 || c < 0 || r >= SIZE || c >= SIZE) continue;
+      if (owned[r][c]) continue;
+      if (grid[r][c] !== start) continue;
+      owned[r][c] = true;
+      stack.push([r+1,c],[r-1,c],[r,c+1],[r,c-1]);
+    }
+    return owned;
+  }
+
+  function highlightCurrent() {
+    const cur = grid[0][0];
+    [...paletteEl.children].forEach((s, i) => {
+      s.classList.toggle('current', i === cur);
+    });
+  }
+
+  function paint() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        cellEls[r*SIZE + c].style.background = `var(${COLORS[grid[r][c]]})`;
+      }
+    }
+    highlightCurrent();
+  }
+
+  function isComplete() {
+    const v = grid[0][0];
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (grid[r][c] !== v) return false;
+      }
+    }
+    return true;
+  }
+
+  function choose(newColor) {
+    if (!active) return;
+    if (newColor === grid[0][0]) return;
+    const owned = ownedCells();
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (owned[r][c]) grid[r][c] = newColor;
+      }
+    }
+    moves++;
+    movesEl.textContent = moves;
+    paint();
+
+    if (isComplete()) {
+      active = false;
+      wins++;
+      localStorage.setItem('floodWins', String(wins));
+      winsEl.textContent = wins;
+      overlayTitle.textContent = 'Solved!';
+      overlaySub.textContent = `Cleared in ${moves} move${moves === 1 ? '' : 's'}.`;
+      playBtn.textContent = 'Play again';
+      overlay.classList.add('show');
+    } else if (moves >= MAX_MOVES) {
+      active = false;
+      overlayTitle.textContent = 'Out of moves';
+      overlaySub.textContent = 'You ran out of moves before filling the board.';
+      playBtn.textContent = 'Try again';
+      overlay.classList.add('show');
+    }
+  }
+
+  function newGame() {
+    moves = 0;
+    movesEl.textContent = 0;
+    active = true;
+    buildBoard();
+    highlightCurrent();
+    overlay.classList.remove('show');
+  }
+
+  playBtn.addEventListener('click', newGame);
+  newBtn.addEventListener('click', newGame);
+
+  buildPalette();
+  overlay.classList.add('show');
+})();
+</script>
+</body>
+</html>
