@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aim</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+    --target: #f59e0b;
+    --target-ring: #fde68a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 24px;
+    gap: 12px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(96vw, 720px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    max-width: 360px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .timer-wrap {
+    width: min(96vw, 720px);
+    height: 6px;
+    background: #1c2029;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .timer-bar {
+    height: 100%;
+    width: 100%;
+    background: var(--accent);
+    transition: width 100ms linear, background 200ms;
+  }
+  .timer-bar.low { background: var(--danger); }
+  .arena {
+    position: relative;
+    width: min(96vw, 720px);
+    height: min(70vh, 540px);
+    background: #161a22;
+    border-radius: 10px;
+    cursor: crosshair;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  .target {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, var(--target-ring), var(--target) 60%, #b45309 100%);
+    box-shadow: 0 0 24px rgba(245, 158, 11, 0.45);
+    transform: translate(-50%, -50%) scale(0);
+    animation: pop-in 140ms ease-out forwards;
+    cursor: pointer;
+  }
+  .target.dying { animation: pop-out 220ms ease-in forwards; pointer-events: none; }
+  .target.hit { animation: hit-burst 260ms ease-out forwards; pointer-events: none; }
+  @keyframes pop-in {
+    0% { transform: translate(-50%, -50%) scale(0); }
+    70% { transform: translate(-50%, -50%) scale(1.1); }
+    100% { transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes pop-out {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  }
+  @keyframes hit-burst {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+  }
+  .miss-mark {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--danger);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: miss-fade 400ms ease-out forwards;
+  }
+  @keyframes miss-fade {
+    0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.6); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.3); }
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.93);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+    text-align: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 {
+    font-size: 28px;
+    margin: 0;
+  }
+  .overlay p { color: var(--muted); margin: 0; max-width: 320px; }
+  .stats {
+    display: flex;
+    gap: 24px;
+    margin: 4px 0;
+  }
+  .stat .num {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .stat .lbl {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>AIM</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Click the circles. 30 seconds. Don't miss.</div>
+    <div class="hud">
+      <div><span class="label">Hits</span><span class="value" id="hits">0</span></div>
+      <div><span class="label">Acc</span><span class="value" id="acc">100%</span></div>
+      <div><span class="label">Best</span><span class="value" id="best">0</span></div>
+    </div>
+    <div class="timer-wrap"><div class="timer-bar" id="timerBar"></div></div>
+    <div class="arena" id="arena"></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Aim Trainer</h2>
+    <p id="overlaySub">Click the orange circles as fast as you can. They shrink in time. 30-second round.</p>
+    <div class="stats" id="statsRow" style="display:none">
+      <div class="stat"><div class="num" id="sHits">0</div><div class="lbl">Hits</div></div>
+      <div class="stat"><div class="num" id="sAcc">0%</div><div class="lbl">Accuracy</div></div>
+      <div class="stat"><div class="num" id="sBest">0</div><div class="lbl">Best</div></div>
+    </div>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const arena = document.getElementById('arena');
+  const hitsEl = document.getElementById('hits');
+  const accEl = document.getElementById('acc');
+  const bestEl = document.getElementById('best');
+  const timerBar = document.getElementById('timerBar');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+  const statsRow = document.getElementById('statsRow');
+  const sHits = document.getElementById('sHits');
+  const sAcc = document.getElementById('sAcc');
+  const sBest = document.getElementById('sBest');
+
+  const ROUND_MS = 30000;
+  const MAX_TARGETS = 2;
+  const SPAWN_MIN_MS = 350;
+  const SPAWN_MAX_MS = 700;
+
+  let hits = 0, misses = 0;
+  let best = parseInt(localStorage.getItem('aimBest') || '0', 10);
+  let running = false;
+  let endsAt = 0;
+  let spawnAt = 0;
+  let targets = new Set();
+  let rafId = null;
+
+  bestEl.textContent = best;
+
+  function rand(min, max) { return Math.random() * (max - min) + min; }
+
+  function targetSize(elapsedFrac) {
+    // shrink as round progresses
+    return Math.max(28, 56 - elapsedFrac * 22);
+  }
+
+  function targetLifetime(elapsedFrac) {
+    return Math.max(700, 1500 - elapsedFrac * 700);
+  }
+
+  function spawnTarget() {
+    const rect = arena.getBoundingClientRect();
+    const elapsed = (performance.now() - (endsAt - ROUND_MS)) / ROUND_MS;
+    const size = targetSize(elapsed);
+    const margin = size / 2 + 6;
+    const x = rand(margin, rect.width - margin);
+    const y = rand(margin, rect.height - margin);
+
+    const el = document.createElement('div');
+    el.className = 'target';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+
+    const lifetime = targetLifetime(elapsed);
+    const expireAt = performance.now() + lifetime;
+
+    const obj = { el, expireAt };
+    targets.add(obj);
+
+    el.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!running) return;
+      hits++;
+      hitsEl.textContent = hits;
+      updateAcc();
+      killTarget(obj, true);
+    });
+
+    arena.appendChild(el);
+  }
+
+  function killTarget(obj, hit) {
+    if (!targets.has(obj)) return;
+    targets.delete(obj);
+    obj.el.classList.add(hit ? 'hit' : 'dying');
+    setTimeout(() => obj.el.remove(), 260);
+  }
+
+  function updateAcc() {
+    const total = hits + misses;
+    const acc = total === 0 ? 100 : Math.round((hits / total) * 100);
+    accEl.textContent = acc + '%';
+  }
+
+  function loop() {
+    if (!running) return;
+    const now = performance.now();
+    const remaining = endsAt - now;
+    if (remaining <= 0) {
+      finish();
+      return;
+    }
+    const pct = (remaining / ROUND_MS) * 100;
+    timerBar.style.width = pct + '%';
+    timerBar.classList.toggle('low', pct < 25);
+
+    // expire stale
+    for (const t of [...targets]) {
+      if (now >= t.expireAt) killTarget(t, false);
+    }
+
+    // spawn
+    if (now >= spawnAt && targets.size < MAX_TARGETS) {
+      spawnTarget();
+      spawnAt = now + rand(SPAWN_MIN_MS, SPAWN_MAX_MS);
+    }
+
+    rafId = requestAnimationFrame(loop);
+  }
+
+  arena.addEventListener('pointerdown', (e) => {
+    if (!running) return;
+    // click on empty arena = miss
+    if (e.target === arena) {
+      misses++;
+      updateAcc();
+      const rect = arena.getBoundingClientRect();
+      const m = document.createElement('div');
+      m.className = 'miss-mark';
+      m.style.left = (e.clientX - rect.left) + 'px';
+      m.style.top = (e.clientY - rect.top) + 'px';
+      arena.appendChild(m);
+      setTimeout(() => m.remove(), 400);
+    }
+  });
+
+  function finish() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    for (const t of [...targets]) killTarget(t, false);
+    timerBar.style.width = '0%';
+    if (hits > best) {
+      best = hits;
+      localStorage.setItem('aimBest', String(best));
+      bestEl.textContent = best;
+    }
+    const total = hits + misses;
+    const acc = total === 0 ? 100 : Math.round((hits / total) * 100);
+    sHits.textContent = hits;
+    sAcc.textContent = acc + '%';
+    sBest.textContent = best;
+    statsRow.style.display = 'flex';
+    overlayTitle.textContent = 'Time';
+    overlaySub.textContent = '';
+    playBtn.textContent = 'Play again';
+    overlay.classList.add('show');
+  }
+
+  function newGame() {
+    hits = 0;
+    misses = 0;
+    hitsEl.textContent = 0;
+    accEl.textContent = '100%';
+    statsRow.style.display = 'none';
+    overlay.classList.remove('show');
+    endsAt = performance.now() + ROUND_MS;
+    spawnAt = performance.now();
+    timerBar.style.width = '100%';
+    timerBar.classList.remove('low');
+    running = true;
+    rafId = requestAnimationFrame(loop);
+  }
+
+  playBtn.addEventListener('click', newGame);
+  overlay.classList.add('show');
+})();
+</script>
+</body>
+</html>
