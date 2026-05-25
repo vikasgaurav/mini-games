@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tiles</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e7e9ee;
+    --muted: #8a8f9b;
+    --accent: #7cf0a8;
+    --danger: #ff6b6b;
+    --lane: #161a22;
+    --lane-line: #232834;
+    --tile: #e7e9ee;
+    --tile-tapped: #4a5060;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  .app {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 24px;
+    gap: 12px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(92vw, 360px);
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .back:hover { color: var(--fg); }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    max-width: 320px;
+  }
+  .hud {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .label { color: var(--muted); margin-right: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .hud .value { font-weight: 600; font-size: 17px; }
+  .stage {
+    position: relative;
+    width: min(92vw, 360px);
+    aspect-ratio: 360 / 600;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    background: var(--lane);
+    border-radius: 10px;
+    display: block;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.93);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms;
+    text-align: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .overlay h2 { font-size: 28px; margin: 0; }
+  .overlay p { color: var(--muted); margin: 0; max-width: 320px; }
+  .btn {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 12px 22px;
+    border-radius: 8px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .btn:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <a class="back" href="./">← all games</a>
+      <h1>TILES</h1>
+      <div style="width: 70px"></div>
+    </div>
+    <div class="subtitle">Tap the lowest white tile. Don't miss. Don't tap empty.</div>
+    <div class="hud">
+      <div><span class="label">Score</span><span class="value" id="score">0</span></div>
+      <div><span class="label">Best</span><span class="value" id="best">0</span></div>
+    </div>
+    <div class="stage">
+      <canvas id="game" width="360" height="600"></canvas>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <h2 id="overlayTitle">Tiles</h2>
+    <p id="overlaySub">Tap the lowest white tile before it falls off. Speed ramps every hit. Tap an empty lane or miss a tile and the run ends.</p>
+    <button class="btn" id="playBtn">Play</button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const COLS = 4;
+  const COL_W = W / COLS;
+  const ROW_H = 120;
+  const ROWS_VIS = Math.ceil(H / ROW_H) + 1;
+
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlaySub = document.getElementById('overlaySub');
+  const playBtn = document.getElementById('playBtn');
+
+  let rows = [];        // {topY, col, tapped, id, flash}
+  let nextId = 0;
+  let speed = 2.4;      // px per 16.67ms (60fps)
+  let score = 0;
+  let best = parseInt(localStorage.getItem('tilesBest') || '0', 10);
+  let running = false;
+  let lastT = 0;
+
+  bestEl.textContent = best;
+
+  function reset() {
+    rows = [];
+    nextId = 0;
+    score = 0;
+    speed = 2.4;
+    scoreEl.textContent = 0;
+    // pre-fill: row 0 at bottom edge - ROW_H, going up
+    for (let i = 0; i < ROWS_VIS + 1; i++) {
+      const topY = H - ROW_H * (i + 1);
+      rows.push({ topY, col: Math.floor(Math.random() * COLS), tapped: false, id: nextId++, flash: 0 });
+    }
+  }
+
+  function lowestActive() {
+    let pick = null;
+    for (const r of rows) {
+      if (r.tapped) continue;
+      if (r.topY > H || r.topY + ROW_H < 0) continue;
+      if (!pick || r.topY > pick.topY) pick = r;
+    }
+    return pick;
+  }
+
+  function update(dt) {
+    const step = speed * (dt / 16.67);
+    for (const r of rows) {
+      r.topY += step;
+      if (r.flash > 0) r.flash -= dt;
+    }
+
+    // check rows scrolled off bottom
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.topY >= H) {
+        if (!r.tapped) return gameOver('Missed a tile');
+        rows.splice(i, 1);
+      }
+    }
+
+    // spawn new rows above
+    let topMost = rows[0];
+    for (const r of rows) if (r.topY < topMost.topY) topMost = r;
+    while (topMost.topY > -ROW_H) {
+      const newTop = topMost.topY - ROW_H;
+      const newRow = { topY: newTop, col: Math.floor(Math.random() * COLS), tapped: false, id: nextId++, flash: 0 };
+      rows.push(newRow);
+      topMost = newRow;
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--lane').trim();
+    ctx.fillRect(0, 0, W, H);
+
+    // lane dividers
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--lane-line').trim();
+    ctx.lineWidth = 1;
+    for (let c = 1; c < COLS; c++) {
+      ctx.beginPath();
+      ctx.moveTo(c * COL_W, 0);
+      ctx.lineTo(c * COL_W, H);
+      ctx.stroke();
+    }
+
+    for (const r of rows) {
+      const x = r.col * COL_W;
+      const y = r.topY;
+      if (r.tapped) {
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--tile-tapped').trim();
+      } else if (r.flash > 0) {
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      } else {
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--tile').trim();
+      }
+      roundRect(x + 4, y + 4, COL_W - 8, ROW_H - 8, 6);
+      ctx.fill();
+    }
+  }
+
+  function loop(t) {
+    const dt = lastT ? (t - lastT) : 16.67;
+    lastT = t;
+    if (running) update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function onTap(x, y) {
+    if (!running) return;
+    const col = Math.floor(x / COL_W);
+    const target = lowestActive();
+    if (!target) return; // nothing to tap (shouldn't happen)
+    const inTile = target.col === col && y >= target.topY && y <= target.topY + ROW_H;
+    if (inTile) {
+      target.tapped = true;
+      target.flash = 180;
+      score++;
+      scoreEl.textContent = score;
+      speed += 0.035;
+    } else {
+      gameOver('Wrong tap');
+    }
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (W / rect.width);
+    const y = (e.clientY - rect.top) * (H / rect.height);
+    onTap(x, y);
+  });
+
+  function gameOver(reason) {
+    running = false;
+    if (score > best) {
+      best = score;
+      localStorage.setItem('tilesBest', String(best));
+      bestEl.textContent = best;
+    }
+    overlayTitle.textContent = reason;
+    overlaySub.textContent = `Score ${score} · Best ${best}`;
+    playBtn.textContent = 'Play again';
+    overlay.classList.add('show');
+  }
+
+  function newGame() {
+    reset();
+    overlay.classList.remove('show');
+    running = true;
+  }
+
+  playBtn.addEventListener('click', newGame);
+
+  reset();
+  draw();
+  overlay.classList.add('show');
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
